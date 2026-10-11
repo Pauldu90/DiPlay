@@ -5426,9 +5426,9 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         val lightLabels = ambientLightLevelLabels()
         choice(body, getString(R.string.settings_ambient_light), lightLabels, draft.effectiveLightLevel(), reconnects = false) {
             if (leapmotor) {
-                val levels = AmbientMusicSettings.FLOW_BRIGHTNESS_RANGE
-                draft = draft.copy(flowBrightness = levels.firstOrNull { level -> level.toString() == lightLabels[it] }
-                    ?: levels.getOrElse(it) { AmbientMusicSettings.FLOW_BRIGHTNESS_DEFAULT })
+                draft = draft.copy(flowBrightness = AmbientMusicSettings.FLOW_BRIGHTNESS_RANGE
+                    .firstOrNull { level -> level.toString() == lightLabels[it] }
+                    ?: AmbientMusicSettings.FLOW_BRIGHTNESS_DEFAULT)
             } else {
                 draft = draft.copy(brightness = it)
             }
