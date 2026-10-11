@@ -16,8 +16,11 @@ internal enum class AmbientLampChannel { BYD_ADB, LEAPMOTOR_BROADCAST }
 /**
  * How the Leapmotor flow light colours the car while music follows it. The OEM engine drives one
  * band per channel; we keep the same rule for [MULTI] and hold a single user colour for [SINGLE].
+ *
+ * Public because `AmbientMusicSettings.Values` — which is public — carries one, and a public type
+ * must not expose an `internal` one.
  */
-internal enum class AmbientFlowMode { SINGLE, MULTI }
+enum class AmbientFlowMode { SINGLE, MULTI }
 
 /**
  * The lamp state the Leapmotor protocol understands. The BYD path works in
