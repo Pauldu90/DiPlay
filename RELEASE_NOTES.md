@@ -41,6 +41,18 @@ Android 7.1.2（API 25）/ Qualcomm msm8953 车机上的 CarPlay 接收端。
   就走车机自己的 `leapmotor.carapp.CARCANCONTROL` 广播（`appCAN=Atmos_ctrl`，与 `VehicleSetting.apk`
   同协议）；其它车机（含 BYD）仍走原有的 ADB 通路，BYD 行为不受影响。
   **不再以「亮度」判断是否驱动**：只看开关（与「随音乐」），零跑协议本身没有亮度参数。
+- **整车 CAN 信号读取** 🆕：零跑车机通过 `leapmotor.cantoapp.update` 广播一次性回传**全部**车辆信号，
+  本版把它接成一条总线（`LeapmotorVehicleSignals`，1 Hz 轮询）。只认零跑车机
+  （`/data/leapmotor/CarType` 存在才启动轮询），不再走 ADB（**零跑车机没有 adbd**）。
+  已知信号：档位 `1010105`、车速 `1100409`/`1100412`/`100001`、电池 SOC `1060115`（回落电源 SOC `1030115`）、
+  SOH `1060306`、电压 `1060122`、快/慢充 `1030505`/`1030506`、EPB `1110113`。
+  `-1` / `-1.0f` 表示「本帧未上报」，**绝不当作真实的 0**。
+- **iPhone 车辆状态（电量/续航）** 🆕：由上面那条总线供数，CarPlay 里 Apple 地图能看到电量、
+  低电量提醒与充电状态。车机**不上报剩余续航**，续航按 SOC × 满电续航估算（默认 400 km，
+  S01 有 380/460 两版）；能量字段只给电量比例（约 150 Wh/km），仅用于比例。
+  设置 →「电量同步到 iPhone」仍可总开关。
+- **iPhone 航位推算（车速/档位）** 🆕：车速与档位经 `$PASCD` 供 iAP2，进隧道无 GPS 时
+  iPhone 能继续推算位置。采样率受 1 Hz 总线限制，iPhone 在样本间自行外插。
 - **USB 权限弹窗**：`MANAGE_USB` + 无障碍按内容判定自动确认。
 - **界面汉化**、零跑档位识别、倒车暂停、iOS 27 视频车内播放（N 挡门控）。
 - **在线更新**（首页快捷设置下方 → 在线更新）：检查 GitHub 上的新构建 → 下载 → 安装。
@@ -85,6 +97,16 @@ Android 7.1.2（API 25）/ Qualcomm msm8953 车机上的 CarPlay 接收端。
 3. 随后应出现 `DiPlay-Ambient: leapmotor applied=<n> sw=0 auto=1 deg=<d> r=<r> g=<g> b=<b>`
    （`sw=0/auto=1` 即自动档；随音乐时 `deg/r/g/b` 随频谱变化）。
 4. 关掉「启用」后应出现 `leapmotor restored to auto`，车机回到自身自动氛围灯。
+
+整车 CAN 信号（需车辆通电）：
+
+1. 起会话后报告里应出现 `DiPlay-Vehicle: vehicle signals listening on leapmotor.cantoapp.update`
+   —— 这行说明接收器注册成功（车型判定走 `DiPlay-Ambient: leapmotor probe file=true`）。
+2. 挂挡应逐次出现 `DiPlay-Vehicle: gear raw=<a> -> <b> (<R/N/D/P>)`；
+   挂 **R** 时同时 `reverse: pause CarPlay sent=true`，退出 R 时 `reverse ended: resume CarPlay sent=true`。
+3. 车动起来后应出现 `DiPlay-LM-Speed: first CAN speed <nn.n> km/h`。
+4. 若接收器注册失败会打印 `vehicle signals receiver not registered: ...`；完全没有任何
+   `vehicle signals listening` 行说明该车机不认这个协议（非零跑，或系统版本不同）。
 
 无线连接成功时报告里应出现：
 

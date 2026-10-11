@@ -13,7 +13,10 @@ object BydNavigationOutputs {
         com.shilapi.xcertplay.network.WifiScanPause.restoreIfNeeded(context)
         if (BydStandaloneHudOutput.available(context)) start(context)
         // Read the battery early, so a reading is ready when CarPlay identifies (see batteryStatus).
-        if (BydOutputSettings.batteryToIphoneActive(context)) BydBatteryStatus.start(context)
+        if (BydOutputSettings.batteryToIphoneActive(context)) {
+            if (com.shilapi.xcertplay.LmCarProbe.isLeapmotor()) LeapmotorBatteryStatus.start(context)
+            else BydBatteryStatus.start(context)
+        }
         // DiLink 3 creates its cluster map display only once the cluster has projected.
         if (BydOutputSettings.enabled(context)) BydClusterBridge.prepareProjectionDisplay(context.applicationContext)
     }
@@ -54,15 +57,21 @@ object BydNavigationOutputs {
     }
 
     /**
-     * The car's battery for the iPhone's vehicle status; starts reading it over adb. The electric
-     * vehicle is declared only once a reading is there (see withVehicleStatusFrom).
+     * The car's battery for the iPhone's vehicle status. On a Leapmotor head unit the reading comes
+     * from the CAN broadcast; on a BYD unit from adb. The electric vehicle is declared only once a
+     * reading is there (see withVehicleStatusFrom).
      */
     fun batteryStatus(context: Context): com.shilapi.xcertplay.transport.VehicleStatusProvider =
-        BydBatteryStatus.also { it.start(context) }
+        if (com.shilapi.xcertplay.LmCarProbe.isLeapmotor()) {
+            LeapmotorBatteryStatus.also { it.start(context) }
+        } else {
+            BydBatteryStatus.also { it.start(context) }
+        }
 
-    /** The car's wheel speed and gear for the iPhone's dead reckoning; read over adb while asked for. */
+    /** The car's wheel speed and gear for the iPhone's dead reckoning; CAN on Leapmotor, adb on BYD. */
     fun wheelSpeed(context: Context): com.shilapi.xcertplay.transport.VehicleSpeedSource =
-        BydWheelSpeedSource.attach(context)
+        if (com.shilapi.xcertplay.LmCarProbe.isLeapmotor()) LeapmotorSpeedSource.attach(context)
+        else BydWheelSpeedSource.attach(context)
     /** Whether the car is in P (read over adb), or null when it cannot tell. Blocking. */
     fun parked(context: Context): Boolean? = BydParkedState.parked(context.applicationContext)
 

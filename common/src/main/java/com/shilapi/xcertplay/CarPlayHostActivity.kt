@@ -5012,8 +5012,11 @@ class CarPlayHostActivity : ComponentActivity() {
         BluetoothAudioHandoff.onDiagnostic = { message -> appendLog(message) }
         LeapmotorMediaKeys.onDiagnostic = { message -> appendLog(message) }
         LeapmotorMediaKeys.attach(this, next)
-        LeapmotorGearMonitor.onDiagnostic = { message -> appendLog(message) }
-        LeapmotorGearMonitor.attach(this, next)
+        // The CAN signal bus is a Leapmotor-only channel (the car answers `apptocan.update`); it
+        // self-gates on `LmCarProbe` internally, which `common` cannot see (that probe is `internal`
+        // to `shared`). On a head unit it does not answer, `attach` returns without starting a poll.
+        LeapmotorVehicleSignals.onDiagnostic = { message -> appendLog(message) }
+        LeapmotorVehicleSignals.attach(this, next)
         if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
         val display = CarPlaySessionDisplay(
             airPlayConfig.main.widthPixels, airPlayConfig.main.heightPixels,
@@ -5396,7 +5399,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val oldSink = sink
         CarPlayMediaKeys.detach(oldController)
         LeapmotorMediaKeys.detach(oldController)
-        LeapmotorGearMonitor.detach(oldController)
+        LeapmotorVehicleSignals.detach(oldController)
         CarPlayVideo.detach(oldController)
         CarPlayBackgroundSession.clear(oldController, keepOwner = true)
         controller = null
@@ -5594,7 +5597,7 @@ class CarPlayHostActivity : ComponentActivity() {
         val oldSink = sink
         CarPlayMediaKeys.detach(oldController)
         LeapmotorMediaKeys.detach(oldController)
-        LeapmotorGearMonitor.detach(oldController)
+        LeapmotorVehicleSignals.detach(oldController)
         CarPlayVideo.detach(oldController)
         CarPlayBackgroundSession.clear(oldController)
         controller = null
