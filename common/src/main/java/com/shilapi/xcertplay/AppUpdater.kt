@@ -21,9 +21,9 @@ object AppUpdater {
     // updater which builds are its own. This line tags v0.2.15-<run_number> and attaches a single
     // asset named mobile-release.apk; the Leapmotor line tags v2.0-<run> with a differently named
     // asset, and offering one of those here would install the wrong build.
-    private const val TAG_PREFIX = "v0.2.15-"
+    private const val TAG_PREFIX = "v0.2.17-"
     private const val RELEASE_ASSET = "mobile-release.apk"
-    private const val LOCAL_PREFIX = "DiPlay-0.2.15-"
+    private const val LOCAL_PREFIX = "DiPlay-0.2.17-"
     private const val LOCAL_SUFFIX = ".apk"
 
     // The beta channel is a second variant of this same line, shipped under its own applicationId
@@ -31,12 +31,27 @@ object AppUpdater {
     // must only ever resolve builds from the namespace it was published into: otherwise the two
     // channels would hand each other their APKs, and each would report the other's run number as
     // an available update.
-    private const val BETA_TAG_PREFIX = "v0.2.15-beta-"
+    private const val BETA_TAG_PREFIX = "v0.2.17-beta-"
     private const val BETA_APPLICATION_ID_SUFFIX = ".psabeta"
 
-    /** The release-tag namespace this build looks in, decided by the channel it was built as. */
-    fun tagPrefix(context: Context): String =
-        if (context.packageName.endsWith(BETA_APPLICATION_ID_SUFFIX)) BETA_TAG_PREFIX else TAG_PREFIX
+    // Legacy namespaces that older installs still listen on. CI publishes every release under the
+    // current prefix AND under each legacy one, so bumping the major version never orphans the
+    // in-app updater: an old build keeps finding new releases through the prefix it scans, and
+    // switches to the current one once it updates. When bumping the major version later, move the
+    // then-current prefix into this list and make CI alias the new release under it too.
+    private val LEGACY_RELEASE_TAG_PREFIXES = listOf("v0.2.15-", "v0.2.12-")
+    private val LEGACY_BETA_TAG_PREFIXES = listOf("v0.2.15-beta-", "v0.2.12-beta-")
+
+    /** The release-tag namespaces this build looks in, current channel first. */
+    fun tagPrefixes(context: Context): List<String> =
+        if (context.packageName.endsWith(BETA_APPLICATION_ID_SUFFIX)) {
+            listOf(BETA_TAG_PREFIX) + LEGACY_BETA_TAG_PREFIXES
+        } else {
+            listOf(TAG_PREFIX) + LEGACY_RELEASE_TAG_PREFIXES
+        }
+
+    /** The namespace this build's own generation publishes into; the first of [tagPrefixes]. */
+    fun tagPrefix(context: Context): String = tagPrefixes(context).first()
 
     private const val CONNECT_TIMEOUT = 10_000
     private const val READ_TIMEOUT = 20_000
@@ -81,12 +96,16 @@ object AppUpdater {
      */
     fun latestBuild(context: Context, preferred: String): Int {
         val order = listOf(preferred) + sources().filter { it != preferred }
-        val prefix = tagPrefix(context)
+        val prefixes = tagPrefixes(context)
         var lastError: Exception? = null
         for (source in order) {
             try {
-                val build = fetchLatestBuild(source, prefix)
-                if (build != null) return build
+                var best: Int? = null
+                for (prefix in prefixes) {
+                    val build = fetchLatestBuild(source, prefix)
+                    if (build != null && (best == null || build > best!!)) best = build
+                }
+                if (best != null) return best
             } catch (failure: Exception) {
                 lastError = failure
             }
@@ -131,6 +150,9 @@ object AppUpdater {
             .mapNotNull { it.groupValues[1].toIntOrNull() }
             .toList()
 
+    private fun downloadUrl(build: Int, prefix: String) =
+        "github.com/$REPO/releases/download/$prefix$build/$RELEASE_ASSET"
+
     private fun readText(stream: java.io.InputStream): String {
         val buffer = ByteArray(64 * 1024)
         val collected = StringBuilder()
@@ -146,17 +168,29 @@ object AppUpdater {
     fun assetName(build: Int) = "$LOCAL_PREFIX$build$LOCAL_SUFFIX"
 
     fun downloadApk(context: Context, build: Int, source: String, onProgress: (Int, Int) -> Unit): File {
-        val path = "github.com/$REPO/releases/download/${tagPrefix(context)}$build/$RELEASE_ASSET"
-        val connection = open(source, path, redirectless = false)
+        // A build may live under the current prefix or under a legacy one (see [tagPrefixes]); try
+        // each in order and keep the first that carries it.
+        var connection: HttpURLConnection? = null
+        var lastCode = 0
+        for (prefix in tagPrefixes(context)) {
+            val candidate = open(source, downloadUrl(build, prefix), redirectless = false)
+            if (candidate.responseCode == 200) {
+                connection = candidate
+                break
+            }
+            lastCode = candidate.responseCode
+            candidate.disconnect()
+        }
+        val connection2 = connection ?: error("HTTP $lastCode")
         val directory = context.getExternalFilesDir(null) ?: context.filesDir
         val temporary = File(directory, "${assetName(build)}.part")
         val target = File(directory, assetName(build))
         try {
-            val code = connection.responseCode
+            val code = connection2.responseCode
             if (code != 200) error("HTTP $code")
-            val total = connection.contentLength
+            val total = connection2.contentLength
             temporary.outputStream().use { output ->
-                connection.inputStream.use { input ->
+                connection2.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     var done = 0L
                     while (true) {
@@ -175,7 +209,7 @@ object AppUpdater {
             temporary.delete()
             throw failure
         } finally {
-            connection.disconnect()
+            connection2.disconnect()
         }
     }
 
