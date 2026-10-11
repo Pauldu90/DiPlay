@@ -30,7 +30,7 @@ internal class LmAmbientMusicFlow(private val mode: () -> LmAmbientMode = { LmAm
 
     /**
      * @param energy played window from [AmbientMusicEnvelope]; zero energy yields the idle look.
-     * @param idleMode the switch state applied when nothing is playing.
+     * @param idleColor the RGB held while nothing is playing, taken from the user's colour choice.
      */
     fun params(energy: AmbientMusicEnvelope.Energy, nowMillis: Long, idleColor: Int): LmAmbientLightProtocol.Params {
         val elapsed = previousTime?.let { (nowMillis - it).coerceAtLeast(0) } ?: 0
