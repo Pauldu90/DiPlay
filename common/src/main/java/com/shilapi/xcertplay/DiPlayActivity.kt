@@ -1099,6 +1099,59 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         })
     }
 
+    private fun settingsUtilitiesCard(): LinearLayout = card().apply {
+        setPadding(0, 0, 0, 0)
+        addView(settingsUtilityRow(
+            SettingsCategory.DIAGNOSTICS,
+            R.drawable.ic_dp_diagnostics,
+            getString(R.string.settings_diagnostics_summary),
+        ), LinearLayout.LayoutParams(-1, dp(72)))
+        addView(View(this@DiPlayActivity).apply { setBackgroundColor(BORDER) },
+            LinearLayout.LayoutParams(-1, dp(1)).apply {
+                marginStart = dp(16)
+                marginEnd = dp(16)
+            })
+        addView(settingsUtilityRow(
+            SettingsCategory.ADVANCED,
+            R.drawable.ic_dp_advanced,
+            getString(R.string.settings_advanced_subtitle),
+            warning = true,
+        ), LinearLayout.LayoutParams(-1, dp(72)))
+    }
+
+    private fun settingsUtilityRow(
+        category: SettingsCategory,
+        icon: Int,
+        description: String,
+        warning: Boolean = false,
+    ): LinearLayout = row().apply {
+        val tint = if (warning) WARNING else ACCENT
+        gravity = Gravity.CENTER_VERTICAL
+        isClickable = true
+        isFocusable = true
+        contentDescription = getString(R.string.settings_open_category, settingsCategoryTitle(category))
+        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
+            android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), null, null), focusRing(12)))
+        setPadding(dp(16), 0, dp(16), 0)
+        addView(ImageView(this@DiPlayActivity).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(tint)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(14) })
+        addView(column().apply {
+            addView(label(settingsCategoryTitle(category), 17, if (warning) WARNING else TEXT, true))
+            addView(label(description, 13, MUTED).apply { setPadding(0, dp(2), 0, 0) })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(ImageView(this@DiPlayActivity).apply {
+            setImageResource(R.drawable.ic_dp_chevron)
+            imageTintList = ColorStateList.valueOf(ACCENT)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginStart = dp(12) })
+        setOnClickListener {
+            openSettingsCategory(category)
+        }
+    }
+
     private fun currentReadiness() = SettingsReadiness.of(
         setupError = setupError != null,
         active = CarPlayBackgroundSession.active,
