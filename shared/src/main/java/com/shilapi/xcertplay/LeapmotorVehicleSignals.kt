@@ -77,10 +77,10 @@ object LeapmotorVehicleSignals {
         val gear: VehicleGearName?
             get() = when (gearRaw) {
                 null -> null
-                GEAR_R -> VehicleGearName.R
-                GEAR_N -> VehicleGearName.N
-                GEAR_D -> VehicleGearName.D
-                else -> VehicleGearName.P
+                GEAR_R -> VehicleGearName.REVERSE
+                GEAR_N -> VehicleGearName.NEUTRAL
+                GEAR_D -> VehicleGearName.DRIVE
+                else -> VehicleGearName.PARK
             }
 
         val charging: Boolean?
