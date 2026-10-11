@@ -8,9 +8,16 @@ internal object AmbientMusicActivityPolicy {
     fun acceptsAudio(audioType: String, payloadType: Int): Boolean =
         AudioChannelMapper.map(audioType, payloadType, AudioChannelMappingMode.MOBILE_COMPATIBLE).channel == AudioChannel.MEDIA
 
-    fun target(enabled: Boolean, music: Boolean, brightness: Int, rendererActive: Boolean, playing: Boolean): AmbientMusicTarget = when {
+    /**
+     * The switch alone turns the feature on; playback decides *what* it does, never whether it runs.
+     *
+     * The old signature took a "brightness" ceiling and mapped `brightness <= 0` onto [LOWEST]. That
+     * was a BYD-only concept leaking into the decision: Leapmotor has no brightness parameter at all,
+     * and on BYD the ceiling must not double as an off switch. Both channels now light as soon as the
+     * feature is enabled, which is why [target] no longer takes brightness.
+     */
+    fun target(enabled: Boolean, music: Boolean, rendererActive: Boolean, playing: Boolean): AmbientMusicTarget = when {
         !enabled -> AmbientMusicTarget.RESTORE_OEM
-        brightness <= 0 -> AmbientMusicTarget.LOWEST
         !rendererActive || !playing -> AmbientMusicTarget.LOWEST
         !music -> AmbientMusicTarget.STATIC
         else -> AmbientMusicTarget.FOLLOW_PLAYBACK

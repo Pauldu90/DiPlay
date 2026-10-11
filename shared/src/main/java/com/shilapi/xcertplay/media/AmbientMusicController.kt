@@ -4,10 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.shilapi.xcertplay.LmAmbientLightProtocol
 import com.shilapi.xcertplay.LmAmbientMode
+import com.shilapi.xcertplay.LmCarProbe
 import com.shilapi.xcertplay.hud.BydAmbientLightClient
-// The shared module's namespace is com.shilapi.xcertplay.shared, so its generated BuildConfig
-// lives there even though the sources use the shorter package.
-import com.shilapi.xcertplay.shared.BuildConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -36,12 +34,19 @@ object AmbientMusicController {
     private var lastLogMillis = 0L
 
     /**
-     * The transport this build uses. The channel is compiled in (see `shared/build.gradle`), so a
-     * Leapmotor unit never starts the ADB worker and a BYD unit never sends a Leapmotor broadcast.
+     * The transport this unit uses, decided at runtime by [LmCarProbe] rather than compiled in.
+     *
+     * A Leapmotor head unit carries `/data/leapmotor/CarType` and therefore gets the fire-and-forget
+     * CAN broadcast; every other unit (BYD and anything unknown) keeps the ADB transport it always
+     * had. The probe is a single cheap file check, so the BYD path is untouched — in particular the
+     * ADB worker is never started on a Leapmotor car and vice versa.
      */
-    internal val lampChannel: AmbientLampChannel = runCatching {
-        AmbientLampChannel.valueOf(BuildConfig.AMBIENT_LAMP_CHANNEL)
-    }.getOrDefault(AmbientLampChannel.BYD_ADB)
+    internal val lampChannel: AmbientLampChannel by lazy {
+        if (LmCarProbe.isLeapmotor()) AmbientLampChannel.LEAPMOTOR_BROADCAST else AmbientLampChannel.BYD_ADB
+    }
+
+    /** True when the runtime probe selected the Leapmotor channel. Used by the settings UI copy. */
+    val runsOnLeapmotor: Boolean get() = lampChannel == AmbientLampChannel.LEAPMOTOR_BROADCAST
 
     @Volatile private var sink: AmbientLampSink? = null
 
@@ -74,12 +79,12 @@ object AmbientMusicController {
 
     @Synchronized fun openSink(context: Context?): Long {
         if (context == null) return 0L
+        this.context = context.applicationContext
         val token = sequence.incrementAndGet()
         activeSink.set(token)
         activeRenderer.set(0L)
         executor.execute {
             if (activeSink.get() != token) return@execute
-            this.context = context.applicationContext
             settings = AmbientMusicSettings.load(context)
             resetColors()
             flow.reset()
@@ -151,12 +156,15 @@ object AmbientMusicController {
         else colors = AmbientMusicColorDetector(initial, palette, AmbientColorSpeed.STANDARD, random)
     }
 
-    /** Checks existing authorization and lamp readback only; never asks for ADB or writes a lamp. */
+    /**
+     * Checks existing authorization and lamp readback only; never asks for ADB or writes a lamp.
+     *
+     * On a Leapmotor unit the transport is a fire-and-forget broadcast: there is nothing to authorize
+     * and nothing to read back, so the answer is always yes without ever constructing the ADB-backed
+     * sink. This is also why the settings dialog must not gate on the reader below.
+     */
     fun checkSupport(context: Context): java.util.concurrent.CompletableFuture<Boolean> {
-        // The Leapmotor transport is a fire-and-forget broadcast: there is nothing to authorize and
-        // nothing to read back, so the feature is always available on that channel. Answering here
-        // also avoids ever constructing the ADB-backed sink on a Leapmotor unit.
-        if (lampChannel == AmbientLampChannel.LEAPMOTOR_BROADCAST) {
+        if (LmCarProbe.isLeapmotor()) {
             return java.util.concurrent.CompletableFuture.completedFuture(true)
         }
         val result = java.util.concurrent.CompletableFuture<Boolean>()
@@ -219,13 +227,13 @@ object AmbientMusicController {
         if (context == null) return
         val lamp = currentSink() ?: return
         val rendererActive = activeRenderer.get() != 0L && playback != null
-        val playbackState = if (rendererActive && values.brightness > 0)
-            playback?.invoke() else null
+        // Playback is only consulted while the renderer is live. The old code also required a nonzero
+        // "brightness" here, which is a BYD-only ceiling that Leapmotor has no equivalent of.
+        val playbackState = if (rendererActive) playback?.invoke() else null
         val leapmotor = lampChannel == AmbientLampChannel.LEAPMOTOR_BROADCAST
         val target = AmbientMusicActivityPolicy.target(
             enabled = values.enabled,
             music = values.music,
-            brightness = values.brightness,
             rendererActive = rendererActive,
             playing = playbackState?.second == true && phonePlayback.current() != false
         )
@@ -250,20 +258,25 @@ object AmbientMusicController {
     }
 
     /**
-     * The Leapmotor light is driven by the spectrum (`VehicleControlService$6`), not by the BYD
-     * colour index: while music follows, the three bands feed R/G/B; otherwise the user's selected
-     * colour is held at the default angle. The switch state stays AUTO unless the user turned the
-     * flow light off, so the car keeps re-applying it after a sleep or a gear change.
+     * The Leapmotor light follows the spectrum (`VehicleControlService$6`). While the music follows,
+     * the flow mode decides the colour: [AmbientFlowMode.MULTI] maps one band per channel, while
+     * [AmbientFlowMode.SINGLE] holds the user's colour and lets only the angle move. Otherwise the
+     * selected colour is held at the user's angle. The switch state stays AUTO so the car keeps
+     * re-applying it after a sleep or a gear change.
      */
     private fun leapmotorFrame(target: AmbientMusicTarget, values: AmbientMusicSettings.Values,
         energy: AmbientMusicEnvelope.Energy, nowMillis: Long, colorIndex: Int): LeapmotorLamp {
         val mode = if (values.enabled) LmAmbientMode.AUTO else LmAmbientMode.OFF
         val selectedRgb = AmbientAlbumPalette.previewRgb(colorIndex.coerceIn(1, 31))
         return if (target == AmbientMusicTarget.FOLLOW_PLAYBACK && values.music) {
-            val params = flow.params(energy, nowMillis, selectedRgb)
+            val params = flow.params(energy, nowMillis, selectedRgb, values.flowMode, values.flowBrightness)
             LeapmotorLamp(mode, params.deg, (params.r shl 16) or (params.g shl 8) or params.b)
         } else {
-            LeapmotorLamp(mode, LmAmbientLightProtocol.DEG_DEFAULT, selectedRgb)
+            // A fixed colour honours the user's angle instead of the protocol default, so the row the
+            // BYD path calls "maximum brightness" is meaningful on a Leapmotor car too.
+            val deg = values.flowBrightness
+                .coerceIn(LmAmbientLightProtocol.DEG_MIN, LmAmbientLightProtocol.DEG_MAX)
+            LeapmotorLamp(mode, deg, selectedRgb)
         }
     }
 

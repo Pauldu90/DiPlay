@@ -22,6 +22,9 @@ class AmbientMusicSettingsTest {
         assertFalse(values.enabled)
         assertEquals(listOf(1), values.selectedColors)
         assertEquals(0, values.brightness)
+        // The flow light defaults to multi-colour at the OEM's default angle.
+        assertEquals(AmbientFlowMode.MULTI, values.flowMode)
+        assertEquals(AmbientMusicSettings.FLOW_BRIGHTNESS_DEFAULT, values.flowBrightness)
         assertEquals(3, values.area)
     }
 
@@ -33,12 +36,30 @@ class AmbientMusicSettingsTest {
         assertEquals(listOf(12), values.selectedColors)
         assertEquals(AmbientColorMode.BEAT, values.colorMode)
         assertEquals(AmbientColorSpeed.STANDARD, values.speed)
+        // A stored BYD brightness is preserved, but it never becomes the Leapmotor angle.
+        assertEquals(4, values.brightness)
+        assertEquals(AmbientMusicSettings.FLOW_BRIGHTNESS_DEFAULT, values.flowBrightness)
+    }
+
+    @Test fun flowModeRoundTripsAndAngleIsClampedToTheProtocolRange() {
+        val saved = AmbientMusicSettings.Values(enabled = true, flowMode = AmbientFlowMode.SINGLE, flowBrightness = 7)
+        AmbientMusicSettings.save(context, saved)
+        val reloaded = AmbientMusicSettings.load(context)
+        assertEquals(AmbientFlowMode.SINGLE, reloaded.flowMode)
+        assertEquals(7, reloaded.flowBrightness)
+
+        // 0 is a valid level on the OEM lampDeg scale, and out-of-range values are clamped.
+        prefs.edit().putString("flowMode", "SINGLE").putInt("flowBrightness", 0).commit()
+        assertEquals(0, AmbientMusicSettings.load(context).flowBrightness)
+        prefs.edit().putString("flowMode", "SINGLE").putInt("flowBrightness", 99).commit()
+        assertEquals(10, AmbientMusicSettings.load(context).flowBrightness)
     }
 
     @Test fun malformedPreferencesUseSafeDefaultsAndValidBounds() {
         prefs.edit().putString("enabled", "true").putString("music", "false")
             .putInt("color", 90).putInt("brightness", -2).putInt("area", 8)
             .putInt("selectedColors", 8).putString("colorMode", "UNKNOWN")
+            .putString("flowMode", "UNKNOWN").putInt("flowBrightness", -5)
             .putString("speed", "UNKNOWN").putString("colorSource", "UNKNOWN").commit()
         val values = AmbientMusicSettings.load(context)
         assertFalse(values.enabled)
@@ -46,6 +67,8 @@ class AmbientMusicSettingsTest {
         assertEquals(AmbientColorSource.SELECTED, values.colorSource)
         assertEquals(listOf(31), values.selectedColors)
         assertEquals(0, values.brightness)
+        assertEquals(AmbientFlowMode.MULTI, values.flowMode)
+        assertEquals(0, values.flowBrightness)
         assertEquals(3, values.area)
         assertEquals(AmbientColorMode.BEAT, values.colorMode)
         assertEquals(AmbientColorSpeed.STANDARD, values.speed)

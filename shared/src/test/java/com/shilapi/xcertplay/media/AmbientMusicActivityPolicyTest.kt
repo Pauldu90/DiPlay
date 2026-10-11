@@ -13,29 +13,33 @@ class AmbientMusicActivityPolicyTest {
         assertFalse(AmbientMusicActivityPolicy.acceptsAudio("", 101))
     }
 
-    @Test fun masterOffRestoresOemRegardlessOfBrightnessOrPlayback() {
+    @Test fun masterOffRestoresOemRegardlessOfPlayback() {
         assertEquals(AmbientMusicTarget.RESTORE_OEM,
-            AmbientMusicActivityPolicy.target(false, true, 0, false, false))
+            AmbientMusicActivityPolicy.target(false, true, false, false))
         assertEquals(AmbientMusicTarget.RESTORE_OEM,
-            AmbientMusicActivityPolicy.target(false, true, 6, true, true))
+            AmbientMusicActivityPolicy.target(false, true, true, true))
+        assertEquals(AmbientMusicTarget.RESTORE_OEM,
+            AmbientMusicActivityPolicy.target(false, false, true, false))
     }
 
-    @Test fun enabledZeroBrightnessRemainsAnExplicitLowestLevelIntent() {
-        assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, true, 0, true, true))
-        assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, true, 0, false, false))
+    @Test fun theEnableSwitchAloneLightsTheLampWithNoBrightnessGate() {
+        // There is no brightness parameter any more: an enabled feature with a live renderer that is
+        // playing always follows playback (or holds a static colour), never the lowest level.
+        assertEquals(AmbientMusicTarget.FOLLOW_PLAYBACK,
+            AmbientMusicActivityPolicy.target(true, true, true, true))
+        assertEquals(AmbientMusicTarget.STATIC,
+            AmbientMusicActivityPolicy.target(true, false, true, true))
     }
 
     @Test fun pausedOrMissingRendererHoldsLowestWhilePlayingSilenceStillFollowsEnvelope() {
         assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, true, 6, true, false))
+            AmbientMusicActivityPolicy.target(true, true, true, false))
         assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, true, 6, false, false))
+            AmbientMusicActivityPolicy.target(true, true, false, false))
         // RMS is intentionally not part of the activity decision: quiet PCM while playing
         // remains ordinary envelope input and resolves to the envelope's floor level.
         assertEquals(AmbientMusicTarget.FOLLOW_PLAYBACK,
-            AmbientMusicActivityPolicy.target(true, true, 6, true, true))
+            AmbientMusicActivityPolicy.target(true, true, true, true))
     }
 
     @Test fun authoritativePhonePauseOverridesAudioTrackStillReportingPlaying() {
@@ -45,10 +49,10 @@ class AmbientMusicActivityPolicyTest {
         assertTrue(state.update(owner, false))
         val effectivePlaying = true && state.current() != false
         assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, true, 6, true, effectivePlaying))
+            AmbientMusicActivityPolicy.target(true, true, true, effectivePlaying))
         assertTrue(state.update(owner, true))
         assertEquals(AmbientMusicTarget.FOLLOW_PLAYBACK,
-            AmbientMusicActivityPolicy.target(true, true, 6, true, true && state.current() != false))
+            AmbientMusicActivityPolicy.target(true, true, true, true && state.current() != false))
     }
 
     @Test fun callbacksFromAnOldOwnerCannotChangeCurrentPlaybackState() {
@@ -78,8 +82,8 @@ class AmbientMusicActivityPolicyTest {
 
     @Test fun staticColorAlsoRespectsPauseAndOnlyLightsDuringMusicPlayback() {
         assertEquals(AmbientMusicTarget.LOWEST,
-            AmbientMusicActivityPolicy.target(true, false, 4, false, false))
+            AmbientMusicActivityPolicy.target(true, false, false, false))
         assertEquals(AmbientMusicTarget.STATIC,
-            AmbientMusicActivityPolicy.target(true, false, 4, true, true))
+            AmbientMusicActivityPolicy.target(true, false, true, true))
     }
 }

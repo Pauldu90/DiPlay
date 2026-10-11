@@ -21,13 +21,6 @@ android {
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // The interior-lamp transport is fixed per build channel: the psa-beta line runs on
-        // Leapmotor cars, which consume a CAN broadcast, while the BYD line drives the lamp through
-        // a privileged ADB shell. CI already stamps DIPLAY_CHANNEL=beta for psa-beta, so the same
-        // flag selects the transport here instead of probing both at runtime.
-        def lampChannel = System.getenv('DIPLAY_CHANNEL') == 'beta' ? 'LEAPMOTOR_BROADCAST' : 'BYD_ADB'
-        buildConfigField 'String', 'AMBIENT_LAMP_CHANNEL', "\"${lampChannel}\""
     }
     ndkVersion = '28.2.13676358'
     externalNativeBuild {
@@ -46,10 +39,6 @@ android {
     // (extractNativeLibs=false, the AGP default): extract at install time instead.
     packaging {
         jniLibs.useLegacyPackaging = true
-    }
-    buildFeatures {
-        // Supplies the channel-dependent AMBIENT_LAMP_CHANNEL constant from defaultConfig.
-        buildConfig = true
     }
 }
 dependencies {

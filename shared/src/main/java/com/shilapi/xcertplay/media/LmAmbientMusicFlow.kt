@@ -31,27 +31,49 @@ internal class LmAmbientMusicFlow(private val mode: () -> LmAmbientMode = { LmAm
     /**
      * @param energy played window from [AmbientMusicEnvelope]; zero energy yields the idle look.
      * @param idleColor the RGB held while nothing is playing, taken from the user's colour choice.
+     * @param flowMode [AmbientFlowMode.MULTI] drives one band per channel (the OEM rule);
+     *   [AmbientFlowMode.SINGLE] holds [idleColor] and only lets the music drive the angle.
+     * @param flowBrightness user ceiling for the angle, on the OEM `lampDeg` 0..10 scale.
      */
-    fun params(energy: AmbientMusicEnvelope.Energy, nowMillis: Long, idleColor: Int): LmAmbientLightProtocol.Params {
+    fun params(energy: AmbientMusicEnvelope.Energy, nowMillis: Long, idleColor: Int,
+        flowMode: AmbientFlowMode = AmbientFlowMode.MULTI,
+        flowBrightness: Int = LmAmbientLightProtocol.DEG_DEFAULT): LmAmbientLightProtocol.Params {
         val elapsed = previousTime?.let { (nowMillis - it).coerceAtLeast(0) } ?: 0
         previousTime = nowMillis
         val decay = exp(-elapsed / 4_000.0)
         bassPeak = maxOf(0.05, energy.bassRms, bassPeak * decay)
         midPeak = maxOf(0.05, energy.midRms, midPeak * decay)
         highPeak = maxOf(0.05, energy.highRms, highPeak * decay)
-        if (energy.rms < SILENCE_RMS) return idle(idleColor)
+        if (energy.rms < SILENCE_RMS) return idle(idleColor, flowMode, flowBrightness)
         val bass = normalize(energy.bassRms, bassPeak)
         val mid = normalize(energy.midRms, midPeak)
         val high = normalize(energy.highRms, highPeak)
-        val target = LmAmbientLightProtocol.flowParams(
-            if (mode() == LmAmbientMode.OFF) LmAmbientMode.AUTO else mode(), bass, mid, high)
+        val resolved = if (mode() == LmAmbientMode.OFF) LmAmbientMode.AUTO else mode()
+        val target = if (flowMode == AmbientFlowMode.SINGLE) singleColour(resolved, bass, flowBrightness)
+            else LmAmbientLightProtocol.flowParams(resolved, bass, mid, high)
         return ease(target, elapsed)
     }
 
-    /** The resting state: the user's colour at the default angle, only ever sent while enabled. */
-    fun idle(idleColor: Int): LmAmbientLightProtocol.Params =
-        LmAmbientLightProtocol.switchParams(if (mode() == LmAmbientMode.OFF) LmAmbientMode.AUTO else mode(),
-            LmAmbientLightProtocol.DEG_DEFAULT, idleColor)
+    /**
+     * One colour, music-driven angle: the RGB stays exactly what the user picked and the low band
+     * sweeps the angle, so a quiet passage rests at the user's floor instead of going dark. This is
+     * the Leapmotor counterpart of the BYD "fixed colour" path.
+     */
+    fun singleColour(mode: LmAmbientMode, bass: Double, idleColor: Int,
+        flowBrightness: Int = LmAmbientLightProtocol.DEG_DEFAULT): LmAmbientLightProtocol.Params {
+        val floor = flowBrightness.coerceIn(LmAmbientLightProtocol.DEG_MIN, LmAmbientLightProtocol.DEG_MAX)
+        val angle = (bass.coerceIn(0.0, 1.0) * (LmAmbientLightProtocol.DEG_MAX - floor) + floor).toInt()
+            .coerceIn(LmAmbientLightProtocol.DEG_MIN, LmAmbientLightProtocol.DEG_MAX)
+        return LmAmbientLightProtocol.switchParams(mode, angle, idleColor)
+    }
+
+    /** The resting state: the user's colour at their chosen angle, only ever sent while enabled. */
+    fun idle(idleColor: Int, flowMode: AmbientFlowMode = AmbientFlowMode.MULTI,
+        flowBrightness: Int = LmAmbientLightProtocol.DEG_DEFAULT): LmAmbientLightProtocol.Params {
+        val resolved = if (mode() == LmAmbientMode.OFF) LmAmbientMode.AUTO else mode()
+        val deg = flowBrightness.coerceIn(LmAmbientLightProtocol.DEG_MIN, LmAmbientLightProtocol.DEG_MAX)
+        return LmAmbientLightProtocol.switchParams(resolved, deg, idleColor)
+    }
 
     /**
      * Perceptual easing on each channel. The angle follows immediately: it is the OEM engine's

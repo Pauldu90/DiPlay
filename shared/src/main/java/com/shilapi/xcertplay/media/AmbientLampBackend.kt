@@ -3,14 +3,21 @@ package com.shilapi.xcertplay.media
 import com.shilapi.xcertplay.LmAmbientMode
 
 /**
- * Which interior-lamp transport this build drives.
+ * Which interior-lamp transport the controller drives.
  *
  * The two car lines need different transports for the same feature: BYD exposes the lamp through a
  * privileged ADB shell, Leapmotor consumes a broadcast on its shared CAN action. Both cars run the
- * same source tree, so the transport is fixed per build channel rather than probed at runtime —
- * probing would start the ADB worker on a car that never answers it ([AmbientMusicController.lampChannel]).
+ * same source tree, so the transport is *probed at runtime* (`LmCarProbe`): a Leapmotor unit selects
+ * [LEAPMOTOR_BROADCAST] and never starts the ADB worker, every other unit keeps [BYD_ADB] exactly as
+ * before. See [AmbientMusicController.lampChannel].
  */
 internal enum class AmbientLampChannel { BYD_ADB, LEAPMOTOR_BROADCAST }
+
+/**
+ * How the Leapmotor flow light colours the car while music follows it. The OEM engine drives one
+ * band per channel; we keep the same rule for [MULTI] and hold a single user colour for [SINGLE].
+ */
+internal enum class AmbientFlowMode { SINGLE, MULTI }
 
 /**
  * The lamp state the Leapmotor protocol understands. The BYD path works in

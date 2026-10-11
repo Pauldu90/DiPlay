@@ -60,6 +60,7 @@ import com.shilapi.xcertplay.hud.BydVehicleProbeOutcome
 import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.media.AmbientColorMode
 import com.shilapi.xcertplay.media.AmbientColorSpeed
+import com.shilapi.xcertplay.media.AmbientFlowMode
 import com.shilapi.xcertplay.media.AmbientMusicController
 import com.shilapi.xcertplay.media.AmbientColorSource
 import com.shilapi.xcertplay.media.AmbientMusicSettings
@@ -5354,11 +5355,26 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             AmbientColorMode.SMART -> getString(R.string.settings_ambient_smart)
         }
         val speed = when (value.speed) { AmbientColorSpeed.SLOW -> getString(R.string.settings_ambient_slow); AmbientColorSpeed.STANDARD -> getString(R.string.settings_ambient_standard); AmbientColorSpeed.FAST -> getString(R.string.settings_ambient_fast) }
-        return getString(R.string.settings_ambient_configuration) + " · " + getString(R.string.settings_ambient_summary, getString(if (value.enabled) R.string.settings_ambient_enabled else R.string.settings_ambient_disabled), mode, speed, value.selectedColors.size, value.brightness)
+        return getString(R.string.settings_ambient_configuration) + " · " + getString(R.string.settings_ambient_summary, getString(if (value.enabled) R.string.settings_ambient_enabled else R.string.settings_ambient_disabled), mode, speed, value.selectedColors.size, value.effectiveLightLevel())
     }
+
+    /**
+     * One "light level" row for both cars: BYD reads it as its 1..6 brightness ceiling, Leapmotor as
+     * the `lampDeg` angle. The stored BYD value may be 0 ("lowest, not off"), which we surface as the
+     * first label rather than hiding it.
+     */
+    private fun AmbientMusicSettings.Values.effectiveLightLevel(): Int =
+        if (AmbientMusicController.runsOnLeapmotor) flowBrightness else brightness
+
+    private fun ambientLightLevelLabels(): List<String> =
+        if (AmbientMusicController.runsOnLeapmotor) AmbientMusicSettings.FLOW_BRIGHTNESS_RANGE.map { it.toString() }
+        else (0..6).map { if (it == 0) getString(R.string.settings_ambient_minimum) else it.toString() }
 
     private fun showAmbientConfiguration() {
         var draft = AmbientMusicSettings.load(this)
+        // Resolve the transport now (from `runsOnLeapmotor`) so the rows below can be labelled for
+        // this car — BYD's 1..6 brightness ceiling or Leapmotor's 0..10 angle — not the build channel.
+        val leapmotor = AmbientMusicController.runsOnLeapmotor
         val body = column().apply { setPadding(dp(24), dp(12), dp(24), dp(12)) }
         body.addView(label(getString(R.string.settings_ambient_parked_notice), 14, MUTED))
         toggle(body, getString(R.string.settings_ambient_enable), getString(R.string.settings_ambient_enable_description), draft.enabled) {
@@ -5402,8 +5418,20 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             paletteDialog.show()
         }
         body.addView(paletteButton, matchButton(0, 60)); body.addView(space(12))
-        choice(body, getString(R.string.settings_ambient_brightness), (0..6).map { if (it == 0) getString(R.string.settings_ambient_minimum) else it.toString() }, draft.brightness, reconnects = false) {
-            draft = draft.copy(brightness = it)
+        // "Flow light mode" replaces the old BYD-only brightness row: every car has a flow light, but
+        // only BYD has a brightness ceiling. It sits above the area choice, which must stay last.
+        choice(body, getString(R.string.settings_ambient_flow_mode), listOf(getString(R.string.settings_ambient_flow_single), getString(R.string.settings_ambient_flow_multi)), draft.flowMode.ordinal, reconnects = false) {
+            draft = draft.copy(flowMode = AmbientFlowMode.entries[it])
+        }
+        val lightLabels = ambientLightLevelLabels()
+        choice(body, getString(R.string.settings_ambient_light), lightLabels, draft.effectiveLightLevel(), reconnects = false) {
+            if (leapmotor) {
+                val levels = AmbientMusicSettings.FLOW_BRIGHTNESS_RANGE
+                draft = draft.copy(flowBrightness = levels.firstOrNull { level -> level.toString() == lightLabels[it] }
+                    ?: levels.getOrElse(it) { AmbientMusicSettings.FLOW_BRIGHTNESS_DEFAULT })
+            } else {
+                draft = draft.copy(brightness = it)
+            }
         }
         choice(body, getString(R.string.settings_ambient_area), listOf(getString(R.string.settings_ambient_front), getString(R.string.settings_ambient_rear), getString(R.string.settings_ambient_all)), draft.area - 1, reconnects = false) {
             draft = draft.copy(area = it + 1)
