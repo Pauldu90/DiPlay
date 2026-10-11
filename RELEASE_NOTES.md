@@ -36,6 +36,10 @@ Android 7.1.2（API 25）/ Qualcomm msm8953 车机上的 CarPlay 接收端。
   - **T03**：通道 B（`com.leapmotor.customkey.music.pauseplay` 的整数 extras）—— **可用**。
 - **方控音频归属**：焦点与 MediaSession 已拿到，原厂播放器会让出方控。
 - **媒体信息投送**：曲名 / 艺术家 / 封面经 MediaSession 提供给车机仪表等读取方。
+- **氛围灯（零跑）** 🆕：设置 →「氛围灯」。开关灯、随音乐流光（频谱 → RGB 多色）、
+  颜色（31 色 / 专辑取色）、速度、亮度、分区。走车机自己的
+  `leapmotor.carapp.CARCANCONTROL` 广播（`appCAN=Atmos_ctrl`），与 `VehicleSetting.apk` 同协议；
+  本渠道（beta）由构建时写死为零跑通路，不启用 BYD 的 ADB 通路。
 - **USB 权限弹窗**：`MANAGE_USB` + 无障碍按内容判定自动确认。
 - **界面汉化**、零跑档位识别、倒车暂停、iOS 27 视频车内播放（N 挡门控）。
 - **在线更新**（首页快捷设置下方 → 在线更新）：检查 GitHub 上的新构建 → 下载 → 安装。
@@ -70,6 +74,13 @@ Android 7.1.2（API 25）/ Qualcomm msm8953 车机上的 CarPlay 接收端。
    `media key source=<通道> action=nextOne -> CarPlay 4 sent=true`。
 3. 若某台车无反应：看 `media key extra-channel unmatched action=... extras=[...]`
    —— 这行会把该车机真正发的 extras 全量列出来。
+
+氛围灯（零跑，需车辆通电）：
+
+1. 设置 →「氛围灯」→ 打开「启用」，点「保存」应**直接通过**（零跑通路不做 ADB 支持性探测）。
+2. 报告里应出现 `DiPlay-Ambient: leapmotor applied=<n> sw=0 auto=1 deg=<d> r=<r> g=<g> b=<b>`
+   （`sw=0/auto=1` 即自动档；随音乐时 `deg/r/g/b` 随频谱变化）。
+3. 关掉「启用」后应出现 `leapmotor restored to auto`，车机回到自身自动氛围灯。
 
 无线连接成功时报告里应出现：
 

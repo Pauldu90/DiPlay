@@ -2,8 +2,12 @@ package com.shilapi.xcertplay.media
 
 import android.content.Context
 import android.util.Log
+import com.shilapi.xcertplay.LmAmbientLightProtocol
+import com.shilapi.xcertplay.LmAmbientMode
 import com.shilapi.xcertplay.hud.BydAmbientLightClient
-import com.shilapi.xcertplay.hud.BydAmbientLightPolicy
+// The shared module's namespace is com.shilapi.xcertplay.shared, so its generated BuildConfig
+// lives there even though the sources use the shorter package.
+import com.shilapi.xcertplay.shared.BuildConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -27,38 +31,19 @@ object AmbientMusicController {
     private var allowed = false
     private var colors = AmbientMusicColorDetector()
     private var brightnessEnvelope = AmbientMusicBrightness(settings.speed)
+    private val flow = LmAmbientMusicFlow()
     private var appliedCount = 0L
     private var lastLogMillis = 0L
 
-    private val lampSession = AmbientLampSession(
-        factory = {
-            val real = BydAmbientLightClient(requireNotNull(context))
-            object : AmbientLampSession.Client {
-                override fun unhealthy(): Boolean {
-                    val phase = real.status().phase
-                    return phase == BydAmbientLightClient.Phase.FAILED || phase == BydAmbientLightClient.Phase.CLOSED
-                }
-                override fun begin(seed: BydAmbientLightPolicy.Snapshot?) = real.begin(seed?.let {
-                    BydAmbientLightClient.State(it.frontColor, it.backColor, it.frontBrightness, it.backBrightness, it.area)
-                }).thenApply { BydAmbientLightPolicy.Snapshot(it.frontColor, it.backColor, it.frontBrightness, it.backBrightness, it.area) }
-                override fun apply(desired: Triple<Int, Int, Int>) = real.apply(desired.first, desired.second, desired.third).thenApply { Unit }
-                override fun stop() = real.stop().thenApply { Unit }
-                // stop's future completes only after closeTransport, including its failure path.
-                override fun close() = real.close()
-            }
-        },
-        dispatch = { executor.execute(it) },
-        now = { android.os.SystemClock.uptimeMillis() },
-        log = { Log.i("DiPlay-Ambient", it) },
-        applied = { desired ->
-            appliedCount++
-            val now = android.os.SystemClock.uptimeMillis()
-            if (now - lastLogMillis >= 5_000) {
-                lastLogMillis = now
-                Log.i("DiPlay-Ambient", "applied=$appliedCount area=${desired.first} color=${desired.second} brightness=${desired.third} colorMode=${settings.colorMode} estimatedBpm=${colors.estimatedBpm?.toInt() ?: 0}")
-            }
-        },
-    )
+    /**
+     * The transport this build uses. The channel is compiled in (see `shared/build.gradle`), so a
+     * Leapmotor unit never starts the ADB worker and a BYD unit never sends a Leapmotor broadcast.
+     */
+    internal val lampChannel: AmbientLampChannel = runCatching {
+        AmbientLampChannel.valueOf(BuildConfig.AMBIENT_LAMP_CHANNEL)
+    }.getOrDefault(AmbientLampChannel.BYD_ADB)
+
+    @Volatile private var sink: AmbientLampSink? = null
 
     // The 20 Hz lamp update, scheduled only while the feature is on; turning it off restores the lamps by itself.
     private var ticking: ScheduledFuture<*>? = null
@@ -71,9 +56,20 @@ object AmbientMusicController {
         } else if (ticking == null) {
             ticking = executor.scheduleWithFixedDelay({ runCatching { tick() }.onFailure {
                 Log.w("DiPlay-Ambient", "lamp update failed", it)
-                lampSession.recover()
+                sink?.recover()
             } }, 50, 50, TimeUnit.MILLISECONDS)
         }
+    }
+
+    private fun currentSink(): AmbientLampSink? = sink ?: context?.let { appContext ->
+        AmbientLampSinks.create(appContext, lampChannel, executor) { desired ->
+            appliedCount++
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastLogMillis >= 5_000) {
+                lastLogMillis = now
+                Log.i("DiPlay-Ambient", "applied=$appliedCount area=${desired.first} color=${desired.second} brightness=${desired.third} colorMode=${settings.colorMode} estimatedBpm=${colors.estimatedBpm?.toInt() ?: 0}")
+            }
+        }.also { sink = it }
     }
 
     @Synchronized fun openSink(context: Context?): Long {
@@ -86,6 +82,7 @@ object AmbientMusicController {
             this.context = context.applicationContext
             settings = AmbientMusicSettings.load(context)
             resetColors()
+            flow.reset()
             brightnessEnvelope = AmbientMusicBrightness(settings.speed)
             allowed = settings.enabled; envelope = null; playback = null
             if (!settings.enabled) restoreOriginal()
@@ -156,9 +153,16 @@ object AmbientMusicController {
 
     /** Checks existing authorization and lamp readback only; never asks for ADB or writes a lamp. */
     fun checkSupport(context: Context): java.util.concurrent.CompletableFuture<Boolean> {
+        // The Leapmotor transport is a fire-and-forget broadcast: there is nothing to authorize and
+        // nothing to read back, so the feature is always available on that channel. Answering here
+        // also avoids ever constructing the ADB-backed sink on a Leapmotor unit.
+        if (lampChannel == AmbientLampChannel.LEAPMOTOR_BROADCAST) {
+            return java.util.concurrent.CompletableFuture.completedFuture(true)
+        }
         val result = java.util.concurrent.CompletableFuture<Boolean>()
         executor.execute {
-            if (lampSession.isReady()) {
+            val existing = sink as? BydAdbLampSink
+            if (existing?.isReady() == true) {
                 result.complete(true)
                 return@execute
             }
@@ -179,6 +183,7 @@ object AmbientMusicController {
             this.context = context.applicationContext
             settings = AmbientMusicSettings.load(context)
             resetColors()
+            flow.reset()
             brightnessEnvelope = AmbientMusicBrightness(settings.speed)
             allowed = settings.enabled
             if (!settings.enabled) restoreOriginal()
@@ -212,10 +217,11 @@ object AmbientMusicController {
         if (!allowed) return
         if (!values.enabled) { restoreOriginal(); return }
         if (context == null) return
-        lampSession.setEnabled(true)
+        val lamp = currentSink() ?: return
         val rendererActive = activeRenderer.get() != 0L && playback != null
         val playbackState = if (rendererActive && values.brightness > 0)
             playback?.invoke() else null
+        val leapmotor = lampChannel == AmbientLampChannel.LEAPMOTOR_BROADCAST
         val target = AmbientMusicActivityPolicy.target(
             enabled = values.enabled,
             music = values.music,
@@ -239,8 +245,29 @@ object AmbientMusicController {
         val color = if (target == AmbientMusicTarget.FOLLOW_PLAYBACK && values.colorCycle)
             colors.color(values.colorMode, nowMillis, rms, energy.bassRms) else if (values.colorSource == AmbientColorSource.ALBUM) albumColor ?: 1
             else values.selectedColors.firstOrNull() ?: values.color
-        lampSession.update(Triple(area, color, brightness))
+        val lm = if (!leapmotor) null else leapmotorFrame(target, values, energy, nowMillis, color)
+        lamp.render(AmbientLampFrame(area, color, brightness, lm))
     }
 
-    private fun restoreOriginal() { lampSession.setEnabled(false) }
+    /**
+     * The Leapmotor light is driven by the spectrum (`VehicleControlService$6`), not by the BYD
+     * colour index: while music follows, the three bands feed R/G/B; otherwise the user's selected
+     * colour is held at the default angle. The switch state stays AUTO unless the user turned the
+     * flow light off, so the car keeps re-applying it after a sleep or a gear change.
+     */
+    private fun leapmotorFrame(target: AmbientMusicTarget, values: AmbientMusicSettings.Values,
+        energy: AmbientMusicEnvelope.Energy, nowMillis: Long, colorIndex: Int): LeapmotorLamp {
+        val mode = if (values.enabled) LmAmbientMode.AUTO else LmAmbientMode.OFF
+        val selectedRgb = AmbientAlbumPalette.previewRgb(colorIndex.coerceIn(1, 31))
+        return if (target == AmbientMusicTarget.FOLLOW_PLAYBACK && values.music) {
+            val params = flow.params(energy, nowMillis, selectedRgb)
+            LeapmotorLamp(mode, params.deg, (params.r shl 16) or (params.g shl 8) or params.b)
+        } else {
+            LeapmotorLamp(mode, LmAmbientLightProtocol.DEG_DEFAULT, selectedRgb)
+        }
+    }
+
+    private fun restoreOriginal() {
+        sink?.restore()
+    }
 }
