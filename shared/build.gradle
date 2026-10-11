@@ -26,8 +26,8 @@ android {
         // Leapmotor cars, which consume a CAN broadcast, while the BYD line drives the lamp through
         // a privileged ADB shell. CI already stamps DIPLAY_CHANNEL=beta for psa-beta, so the same
         // flag selects the transport here instead of probing both at runtime.
-        val lampChannel = if (System.getenv("DIPLAY_CHANNEL") == "beta") "LEAPMOTOR_BROADCAST" else "BYD_ADB"
-        buildConfigField 'String', 'AMBIENT_LAMP_CHANNEL', "\"$lampChannel\""
+        def lampChannel = System.getenv('DIPLAY_CHANNEL') == 'beta' ? 'LEAPMOTOR_BROADCAST' : 'BYD_ADB'
+        buildConfigField 'String', 'AMBIENT_LAMP_CHANNEL', "\"${lampChannel}\""
     }
     ndkVersion = '28.2.13676358'
     externalNativeBuild {
